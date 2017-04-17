@@ -73,7 +73,7 @@ void Moter_StandIteration(MoterControl *moter)
     int err;
     int16_t data[3];
     float angle;
-    static float angle_y, gyro_y;     //用static修饰，因为这两个参数是随时都在变的，而且每次变得时候的前一次的值是要保证保持前一次的
+    static float angle_y, gyro_y; //用static修饰，因为这两个参数是随时都在变的，而且每次变得时候的前一次的值是要保证保持前一次的
 
     // 获取陀螺仪和加速计的读数
     err = mpu6050_read_accel(data);

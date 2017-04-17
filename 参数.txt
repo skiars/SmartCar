@@ -1,6 +1,0 @@
-#start
-pid stand 0.3 0.0 0.05
-pid speed 8.0 0.4 0.0
-pid turn 0.2 0.0 1.0
-forward 12
-speed 0
