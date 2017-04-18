@@ -22,8 +22,7 @@ void task(void * argument)
         ov7725_get_img();
         TrunController_Iteration(turn); // 方向环迭代
         debug_disp_image(turn->track);
-//        OLED_DispStr8x16(82, 0, str);
-        
+
 //        uart_senddata(data, 2);
 //        uart_senddata((const char *)image_buff, 600);
         if (
