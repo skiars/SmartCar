@@ -43,12 +43,13 @@ static void bitmap_decode(uint8_t *dst, uint8_t *src, size_t size)
 // 获取方向偏差
 static int _getTrunOffset(TrunController *ctrl)
 {
-    int k;
     TrackInfo *info = ctrl->track;
     
+    if (READ_BITS(info->flags, LOOP_TURN)) { // 如果是环形路口直接转弯
+        return info->loopDir == LEFT ? -600 : 600;
+    }
     Track_GetOffset(info);
-    k = 0; //info->slope / 20;
-    return info->offset + info->slope * (int)(ctrl->forward + abs_int(k)); // 计算拟合偏差
+    return info->offset + info->slope * ctrl->forward; // 计算拟合偏差
 }
 
 // 转向控制器迭代

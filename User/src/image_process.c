@@ -271,6 +271,51 @@ static int _findCros(TrackInfo * info)
     return 0;
 }
 
+// 判断圆环的方向
+static void _getLoopDir(TrackInfo * info)
+{
+    static int count = 0;
+
+    // 只有在圆环中蔡判断圆环的方向
+    if (READ_BITS(info->flags, ON_LOOP_WAY)) {
+        // 圆环方向标志无效
+        if (!READ_BITS(info->flags, LOOPDIR_VALID)) {
+            int y, end, width = info->width - 1, l, r;
+            int16_t *edge;
+
+            // 识别左边的出口
+            end = info->endLine[LEFT];
+            edge = info->edge[LEFT];
+            for (y = 1; y < end; ++y) {
+                // 检测到前方出口
+                if (edge[y] == 0 && edge[y] - edge[y - 1] < -5) {
+                    l = y;
+                    break;
+                }
+            }
+            // 识别右边的出口
+            end = info->endLine[RIGHT];
+            edge = info->edge[RIGHT];
+            for (y = 1; y < end; ++y) {
+                // 检测到前方出口
+                if (edge[y] == width && edge[y] - edge[y - 1] > 5) {
+                    r = y;
+                    break;
+                }
+            }
+            info->loopDir = l < r ? LEFT : RIGHT;
+            SET_BITS(info->flags, LOOPDIR_VALID); // 圆环方向有效标志置位
+            count = 0; // 复位计时器
+        }
+    } else {
+        if (count < 20) {
+            ++count; // 清标志计时
+        } else { // 如果计数达到10次则圆环方向有效标志清零
+            CLEAR_BITS(info->flags, LOOPDIR_VALID);
+        }
+    }
+}
+
 // 判断前方是否是圆环, 检查赛道是否有连续变宽的趋势
 static short _fingLoop(TrackInfo * info)
 {
@@ -284,7 +329,7 @@ static short _fingLoop(TrackInfo * info)
         d1 = edge[i] - edge[i - 3];
         d2 = edge[i - 3] - edge[i - 6];
         // 拐角处前面几行向左延伸, 后面几行向右延伸
-        if (d1 < -3 && d1 > -20 && d2 > 1 && d2 < 4) {
+        if (d1 < -3 && d1 > -14 && d2 > 1 && d2 < 4) {
             l = i - 3;
             break;
         }
@@ -297,7 +342,7 @@ static short _fingLoop(TrackInfo * info)
         d1 = edge[i] - edge[i - 3];
         d2 = edge[i - 3] - edge[i - 6];
         // 拐角处前面几行向右延伸, 后面几行向左延伸
-        if (d1 > 3 && d1 < 20 && d2 < -1 && d2 > -4) {
+        if (d1 > 3 && d1 < 14 && d2 < -1 && d2 > -4) {
             r = i - 3;
             break;
         }
@@ -314,7 +359,7 @@ static short _fingLoop(TrackInfo * info)
         for (i = l; i < out; ++i) {
             uint8_t *img = info->image + (int)(height - 1 - i) * width;
             if (!img[middle]) { // 遇到黑色
-                if (i - l > 6) {
+                if (i - l > 10) {
                     return l;
                 }
             }
@@ -323,101 +368,55 @@ static short _fingLoop(TrackInfo * info)
     return 0;
 }
 
-// 圆环补线
-static short _loopGetLine(TrackInfo * info)
+// 圆环打角
+void _loopRun(TrackInfo * info)
 {
-    int i, line, dir, out;
-    int y0, x0, y1, dx, dy;
-    int width = info->width, height = info->height;
-    uint8_t *img = info->image + (height - 1) * width;
+    int i, line, dir, y0;
+    static int status = 0;
 
-    for (dir = 0, y0 = info->height; dir < 2; ++dir) {
+    y0 = min_int(info->endLine[LEFT], info->endLine[RIGHT]);
+    for (dir = 0; dir < 2; ++dir) {
         line = info->endLine[dir] - 4;
         // 寻找拐点行
         for (i = 5; i < line; ++i) {
             // 判断是否是拐点
             if ((info->edge[dir][i] - info->edge[dir][i - 2])
                 * (info->edge[dir][i - 2] - info->edge[dir][i - 5]) < -4) {
+                y0 = min_int(y0, i); // 记录拐点行数
                 break;
             }
         }
-        y0 = min_int(y0, i); // 记录拐点行数
     }
-    dir = info->loopDir;
-    // 寻找丢线行
-    out = min_int(info->endLine[LEFT], info->endLine[RIGHT]);
-    for (line = 0; line < out; ++line) {
-        if (info->edge[LEFT][line] <= 0
-            || info->edge[RIGHT][line] >= width - 1) {
-            break;
+    if (y0 < 16) {
+        SET_BITS(info->flags, LOOP_TURN);
+        switch (status) {
+            case 0:
+                status = 1; // 进路口
+                break;
+            case 2:
+                status = 3; // 出路口
+                break;
+        default:
+                break;
+        }
+    } else if (y0 > 25) {
+        CLEAR_BITS(info->flags, LOOP_TURN);
+        switch (status) {
+            case 1:
+                status = 2; // 已经进路口
+                break;
+            case 3:
+                if (y0 > 40) {
+                    status = 0; // 已经出路口
+                    CLEAR_BITS(info->flags, ON_LOOP_WAY);
+                }
+                break;
+        default:
+                break;
         }
     }
-    if (y0 >= 30 && line > 40) { // 说明已经出圆环
-        if (info->slope < 40) {
-            return 0;
-        }
-    }
-
-//    printf("line: %d, y0: %d, middle: %d\n", line, y0, info->middle[y0]);
-    // 如果没有拐点就说明附近是路口, 此时边线会丢线, 将扫描的x坐标设置为width / 2,
-    // 否则说明前方一段距离才是路口, 以拐点行的中线作为扫描x坐标
-    x0 = y0 < line ? info->middle[y0] : info->middle[line];
-    // 向前寻找, 直到不再丢线(遇到黑色)
-    for (i = y0; i < height - 1; ++i) {
-        img = info->image + (height - 1 - i) * width;
-        if (img[x0] == 0x00) { // 前方为黑色时跳出
-            break;
-        }
-    }
-    y1 = i; // 记录扫描行数
-
-    // 没有找到拐点行说明附近就是路口
-    if (y0 >= line) {
-        for (i = 0, out = 0; i < 10; ++i) {
-            out += info->edge[RIGHT][i] - info->edge[LEFT][i];
-        }
-        out /= 10; // 赛道平均宽度
-//        printf("line: %d\n", out);
-        if (out < 65) {
-            return -1;
-        }
-        y0 = line; // 没有拐点, 所以指定y0为开始丢线的行
-        // 寻找边界: 遇到白色像素结束搜索
-        if (dir == LEFT) { // 当出口在左边时
-            for (i = 0; i < width && img[i] == 0x00; ++i); // 寻找左边的边线
-            info->edge[LEFT][y1] = i;
-            for (; i < width && img[i]; ++i); // 寻找右边边线
-            info->edge[RIGHT][y1] = i;
-        } else { // 当出口在右边时
-            for (i = width; i > 0 && img[i] == 0x00; ++i); // 寻找右边的边线
-            info->edge[LEFT][y1] = i;
-            for (; i > 0 && img[i]; ++i); // 寻找左边的边线
-            info->edge[RIGHT][y1] = i;
-        }
-    } else { // 附近找到拐点说明前方是环形路口
-        // 寻找前方赛道(一般是内圈的圆环)
-        if (dir == LEFT) { // 如果路口向左拐就寻找右边线
-            for (i = x0; i > 0 && !img[i]; --i); // 直到图像变为白色
-            info->edge[RIGHT][y1] = i; // 右边线
-            for (; i > 0 && img[i]; --i); // 直到黑色
-            info->edge[LEFT][y1] = i; // 右边线
-        } else { // 否则寻找左边线
-            for (i = x0; i < width && !img[i]; ++i); // 直到图像变为白色
-            info->edge[LEFT][y1] = i;
-        }
-        --y0;
-    }
-
-    info->middle[y1] = (info->edge[LEFT][y1] + info->edge[RIGHT][y1]) / 2;
-    // 补画中线
-    x0 = info->middle[y0];
-    dx = info->middle[y1] - x0;
-    dy = y1 - y0;
-    for (i = y0; i < y1; ++i) {
-        info->middle[i] = x0 + (i - y0) * dx / dy;
-    }
-    return y1 + 1;
 }
+
 
 // 提取赛道边线
 void Track_GetEdgeLine(TrackInfo * info)
@@ -434,15 +433,10 @@ void Track_GetEdgeLine(TrackInfo * info)
     y = scanFront(info);
     if (y == FRONT_LINE) {
         y = scanNext(info, FRONT_LINE); // 扫描剩下的赛道
-        if (_fingLoop(info) || READ_BITS(info->flags, ON_LOOP_WAY)) { // 检查是否在圆环中
-            y = _loopGetLine(info);
-            if (y > 0) {
-                scanNext(info, y);
-                SET_BITS(info->flags, ON_LOOP_WAY); // 设置圆环路口标志
-                CLEAR_BITS(info->flags, ON_CROSS_WAY); // 清除十字路口标志
-            } else if (y == 0) {
-                CLEAR_BITS(info->flags, ON_LOOP_WAY);
-            }
+        if (READ_BITS(info->flags, ON_LOOP_WAY) || _fingLoop(info)) { // 检查是否在圆环中
+            SET_BITS(info->flags, ON_LOOP_WAY);
+            _getLoopDir(info); // 获取圆环出口方向
+            _loopRun(info);
         } else { // 如果不在圆环中就判断是不是在十字路口
             y = _findCros(info);
             if (y) { // 在十字路口
@@ -456,16 +450,13 @@ void Track_GetEdgeLine(TrackInfo * info)
             y = scanJumpWhite(info, y);
             scanNext(info, y);
         }
-        if (READ_BITS(info->flags, ON_LOOP_WAY)) { // 在圆环中
-            y = _loopGetLine(info);
-            if (y) {
-                scanNext(info, y);
-            }
+        if (READ_BITS(info->flags, ON_LOOP_WAY)) {
+            _loopRun(info);
         }
     }
 }
 
-// 最小二乘法拟合附近赛道的斜率和偏差
+// 获取赛道偏差
 int Track_GetOffset(TrackInfo *info)
 {
     int meanX = 0, meanY = 0, sum1 = 0, sum2 = 0, n, i;
@@ -474,7 +465,7 @@ int Track_GetOffset(TrackInfo *info)
     // 求需要拟合的点数
     n = max_int(info->endLine[LEFT], info->endLine[RIGHT]);
     n = min_int(n - 5, 45); // 最多采用前45行数据, 并且, 在丢线前的几行数据可能很不稳定, 不使用
-    if (n <= 5) { // 样本点数少于5点时直接返回, 并使用上一次的值
+    if (n <= 5) { // 样本点数少于5点时直接返回
         return info->offset;
     }
     // 求x, y平均值

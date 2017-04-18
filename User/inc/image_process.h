@@ -19,9 +19,13 @@
 #define CHECK_EDGE(X, W) ((X) < (W) ? ((X) > 0 ? (X) : 0) : (W) - 1)
 
 // 十字路口标志
-#define ON_CROSS_WAY    0x02
+#define ON_CROSS_WAY    0x01
 // 在圆环中标志
-#define ON_LOOP_WAY     0x04
+#define ON_LOOP_WAY     0x02
+// 圆环方向有效标志
+#define LOOPDIR_VALID   0x04
+// 圆环打角标志
+#define LOOP_TURN       0x08
 
 #define SET_BITS(a, b)      ((a) |= (b))
 #define CLEAR_BITS(a, b)    ((a) &= ~(b))
