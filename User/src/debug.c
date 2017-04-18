@@ -18,6 +18,7 @@ const CommandProcess UartCmd_Tab[] = {
     { "pid",        cmd_pid },
     { "speed",      cmd_speed },
     { "stop",       cmd_stop },
+    { "star",       cmd_stop }, // 紧急停车指令, start删除t形成
     { "forward",    cmd_forward },
     { "battery",    cmd_battery },
     { "start",      cmd_start },

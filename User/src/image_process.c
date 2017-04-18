@@ -12,8 +12,6 @@
 #define t_free(p)         free(p)
 #endif
 
-static unsigned long sqrt_int32(unsigned long x);
-
 // 创建一个赛道信息结构
 TrackInfo *TrackInfo_Init(uint8_t *image, int width, int height)
 {
@@ -232,8 +230,7 @@ static int scanJumpWhite(TrackInfo * info, int y)
 // 识别十字路口
 static int _findCros(TrackInfo * info)
 {
-    short  out, d1, d2, *line;
-    int i, endl, endr;
+    int out, i, endl, endr;
 
     out = max_int(info->endLine[LEFT], info->endLine[RIGHT]);
     // 识别直入十字路口
@@ -277,24 +274,51 @@ static int _findCros(TrackInfo * info)
 // 判断前方是否是圆环, 检查赛道是否有连续变宽的趋势
 static short _fingLoop(TrackInfo * info)
 {
-    short i, out, count = 0, dl, dr;
+    int16_t *edge;
+    int i, out, l = 0, r = 0, d1, d2;
 
-    // 寻找丢线行
-    out = max_int(info->endLine[LEFT], info->endLine[RIGHT]) - 1;
-    // 检查赛道是否在连续变宽
-    for (i = 1; i < out && count < 4; ++i) {
-        dl = info->edge[LEFT][i] - info->edge[LEFT][i - 1];
-        dr = info->edge[RIGHT][i] - info->edge[RIGHT][i - 1];
-        // 左边线道向左延伸, 同时右边线向右延伸
-        if (dl < 0 && dl > -6 && dr > 0 && dr < 6) {
-            count++;
-        } else {
-            count = 0;
+    // 检测左边的拐角
+    out = info->endLine[LEFT];
+    edge = info->edge[LEFT];
+    for (i = 6; i < out; ++i) {
+        d1 = edge[i] - edge[i - 3];
+        d2 = edge[i - 3] - edge[i - 6];
+        // 拐角处前面几行向左延伸, 后面几行向右延伸
+        if (d1 < -3 && d1 > -20 && d2 > 1 && d2 < 4) {
+            l = i - 3;
+            break;
         }
     }
-    // 如果赛道同时向两边延伸并且延伸行数超过4行则说明前方是圆环
-    if (count == 4 && i < out) {
-        return  i;
+
+    // 检测右边的拐角
+    out = info->endLine[RIGHT];
+    edge = info->edge[RIGHT];
+    for (i = 6; i < out; ++i) {
+        d1 = edge[i] - edge[i - 3];
+        d2 = edge[i - 3] - edge[i - 6];
+        // 拐角处前面几行向右延伸, 后面几行向左延伸
+        if (d1 > 3 && d1 < 20 && d2 < -1 && d2 > -4) {
+            r = i - 3;
+            break;
+        }
+    }
+
+    // 两边都存在拐角
+    if (l && r) {
+        int middle, height = info->height, width = info->width;
+
+        // 寻找前方的圆环
+        l = min_int(l, r);
+        out = min_int(l + 20, info->height);
+        middle = info->middle[l];
+        for (i = l; i < out; ++i) {
+            uint8_t *img = info->image + (int)(height - 1 - i) * width;
+            if (!img[middle]) { // 遇到黑色
+                if (i - l > 6) {
+                    return l;
+                }
+            }
+        }
     }
     return 0;
 }
@@ -306,20 +330,15 @@ static short _loopGetLine(TrackInfo * info)
     int y0, x0, y1, dx, dy;
     int width = info->width, height = info->height;
     uint8_t *img = info->image + (height - 1) * width;
-    static int status = 0;
 
     for (dir = 0, y0 = info->height; dir < 2; ++dir) {
-        dx = info->edge[dir][1] - info->edge[dir][0]; // 这里的dx只是用作一个临时变量
         line = info->endLine[dir] - 4;
         // 寻找拐点行
-        for (i = 2; i < line; ++i) {
-            dy = info->edge[dir][i] - info->edge[dir][i - 1];
+        for (i = 5; i < line; ++i) {
             // 判断是否是拐点
-            if (dx * dy < -1) {
+            if ((info->edge[dir][i] - info->edge[dir][i - 2])
+                * (info->edge[dir][i - 2] - info->edge[dir][i - 5]) < -4) {
                 break;
-            }
-            if (dy) {
-                dx = dy;
             }
         }
         y0 = min_int(y0, i); // 记录拐点行数
